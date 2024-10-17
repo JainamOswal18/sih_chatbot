@@ -51,6 +51,8 @@ the following command to test it in the console.
 
 ```
 $ (venv) uvicorn app:app --reload
+or 
+$ (venv) python app.py
 ```
 
 uses:
