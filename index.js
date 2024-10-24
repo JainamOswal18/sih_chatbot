@@ -404,7 +404,11 @@ function handleVoiceInput() {
 function removeListeningMessage() {
   const messages = chatbotContent.getElementsByClassName("bot-message");
   const lastMessage = messages[messages.length - 1];
-  if (lastMessage && lastMessage.textContent === "Listening...") {
+  if (
+    lastMessage &&
+    (lastMessage.textContent === "Listening..." ||
+      lastMessage.textContent === "सुन रहा हूं...")
+  ) {
     chatbotContent.removeChild(lastMessage);
   }
 }
@@ -464,96 +468,150 @@ async function fetchChatbotResponse(query) {
   return data.response;
 }
 
-let recognition;
+let recognition = null;
 let isListening = false;
 
 function initSpeechRecognition() {
-  recognition = new (window.SpeechRecognition ||
-    window.webkitSpeechRecognition)();
-  recognition.continuous = false;
-  recognition.interimResults = false;
-
-  recognition.onresult = (event) => {
-    const transcript = event.results[0][0].transcript;
-    userInput.value = transcript;
-    removeListeningMessage();
-
-    // if (currentLanguage === "hi") {
-    //   appendMessage(
-    //     "Hindi speech recognized. Note: The text may appear in English characters. Please verify and edit if necessary.",
-    //     "bot-message"
-    //   );
-    // }
-
-    handleUserInput();
-  };
-
-  recognition.onerror = (event) => {
-    console.error("Speech recognition error", event.error);
-    isListening = false;
-    updateVoiceButtonState();
-    removeListeningMessage();
-
-    if (event.error === "no-speech") {
-      appendMessage("No speech was detected. Please try again.", "bot-message");
-    } else if (event.error === "audio-capture") {
-      appendMessage(
-        "No microphone was found. Ensure that a microphone is installed and that microphone settings are configured correctly.",
-        "bot-message"
-      );
-    } else if (event.error === "not-allowed") {
-      appendMessage(
-        "Permission to use microphone is blocked. To fix this, go to chrome://settings/content/microphone",
-        "bot-message"
-      );
-    } else {
-      appendMessage(
-        "Error occurred in speech recognition. Please try again.",
-        "bot-message"
-      );
+  try {
+    // Check for browser support
+    if (
+      !("SpeechRecognition" in window || "webkitSpeechRecognition" in window)
+    ) {
+      throw new Error("Speech recognition not supported in this browser");
     }
-  };
 
-  recognition.onend = () => {
-    isListening = false;
-    updateVoiceButtonState();
-    removeListeningMessage();
-  };
+    // Initialize speech recognition
+    const SpeechRecognition =
+      window.SpeechRecognition || window.webkitSpeechRecognition;
+    recognition = new SpeechRecognition();
+
+    // Configure recognition settings
+    recognition.continuous = false;
+    recognition.interimResults = false;
+
+    // Handle recognition results
+    recognition.onresult = (event) => {
+      const transcript = event.results[0][0].transcript;
+      userInput.value = transcript;
+      removeListeningMessage();
+      handleUserInput();
+    };
+
+    // Handle recognition errors
+    recognition.onerror = (event) => {
+      console.error("Speech recognition error:", event.error);
+      isListening = false;
+      updateVoiceButtonState();
+      removeListeningMessage();
+
+      const errorMessages = {
+        "no-speech": "No speech was detected. Please try again.",
+        "audio-capture":
+          "No microphone was found. Please check your microphone settings.",
+        "not-allowed":
+          "Microphone access was denied. Please allow microphone access in your browser settings.",
+        network: "Network error occurred. Please check your connection.",
+        aborted: "Speech input was aborted.",
+        default: "An error occurred with speech recognition. Please try again.",
+      };
+
+      appendMessage(
+        errorMessages[event.error] || errorMessages.default,
+        "bot-message error-message"
+      );
+    };
+
+    // Handle recognition end
+    recognition.onend = () => {
+      isListening = false;
+      updateVoiceButtonState();
+      removeListeningMessage();
+    };
+
+    // Handle recognition start
+    recognition.onstart = () => {
+      isListening = true;
+      updateVoiceButtonState();
+      appendMessage(
+        currentLanguage === "hi" ? "सुन रहा हूं..." : "Listening...",
+        "bot-message"
+      );
+    };
+  } catch (error) {
+    console.error("Error initializing speech recognition:", error);
+    voiceButton.style.display = "none"; // Hide voice button if not supported
+    appendMessage(
+      "Speech recognition is not supported in your browser. Please use text input instead.",
+      "bot-message error-message"
+    );
+  }
 }
 
 function updateVoiceButtonState() {
+  if (!voiceButton) return;
+
   voiceButton.classList.toggle("listening", isListening);
+
+  // Update button appearance and aria-label
   if (isListening) {
+    voiceButton.classList.add("active");
     voiceButton.setAttribute(
       "aria-label",
       currentLanguage === "hi" ? "आवाज़ इनपुट बंद करें" : "Stop voice input"
     );
   } else {
+    voiceButton.classList.remove("active");
     voiceButton.setAttribute(
       "aria-label",
-      currentLanguage === "hi" ? "आवाज़ इनपुट शुरू करें" : "Start voice input"
+      currentLanguage === "hi" ? "आवाज़ इनपुत शुरू करें" : "Start voice input"
     );
   }
 }
 
 function toggleVoiceRecognition() {
-  if (!recognition) {
-    initSpeechRecognition();
-  }
+  try {
+    if (!recognition) {
+      initSpeechRecognition();
+    }
 
-  if (isListening) {
-    recognition.stop();
-  } else {
-    recognition.lang = currentLanguage === "hi" ? "hi-IN" : "en-US";
-    recognition.start();
-    isListening = true;
+    if (!recognition) {
+      return; // Exit if initialization failed
+    }
+
+    if (isListening) {
+      recognition.stop();
+    } else {
+      // Check if the browser supports the selected language
+      const language = currentLanguage === "hi" ? "hi-IN" : "en-US";
+      recognition.lang = language;
+
+      // Request microphone permission explicitly
+      navigator.mediaDevices
+        .getUserMedia({ audio: true })
+        .then(() => {
+          recognition.start();
+        })
+        .catch((err) => {
+          console.error("Microphone permission error:", err);
+          appendMessage(
+            "Please allow microphone access to use voice input.",
+            "bot-message error-message"
+          );
+          isListening = false;
+          updateVoiceButtonState();
+        });
+    }
+  } catch (error) {
+    console.error("Error in toggleVoiceRecognition:", error);
     appendMessage(
-      currentLanguage === "hi" ? "सुन रहा हूं..." : "Listening...",
-      "bot-message"
+      "An error occurred with voice input. Please try again or use text input.",
+      "bot-message error-message"
     );
+    isListening = false;
+    updateVoiceButtonState();
   }
-  updateVoiceButtonState();
 }
+
 
 
 
@@ -585,6 +643,13 @@ userInput.addEventListener("keypress", (event) => {
   if (event.key === "Enter") {
     handleUserInput();
   }
+});
+
+// Initialize voice button event listener
+document.addEventListener('DOMContentLoaded', () => {
+    if (voiceButton) {
+        voiceButton.addEventListener('click', handleVoiceInput);
+    }
 });
 
 window.onerror = function (message, source, lineno, colno, error) {
